@@ -1,8 +1,6 @@
 # Reign of the Unliving / Dead
 
-Data on Reign trinket from TOGC - PTR
-
-Out of all 2,015 PTR logs for the first session of TOGC PTR (May 5th - May 8th), only 4 PUBLIC logs had the trinket Reign (Heroic):
+2,015 PTR logs for the first session of TOGC PTR (May 5th - May 8th), only 4 PUBLIC logs had the trinket Reign (Heroic):
 
 - 'tDzK7FTJqW3LwAr4' ~ 'Enh Shaman'
 - '36XxM8WBTjFtcpKN' ~ 'Spriest'
@@ -22,6 +20,14 @@ An alternative to this measure is how often each class takes to get one proc of 
 
 <img src="img/plot5_ridge.png" />
 
+The enh shaman had reign procs every 2.7s vs other classes at 3s (boomie), and 4s (mage/spriest) 
 
+i.e.
+Shaman had lower damage per hit, but it had more procs.
+Mage had higher damage per hit, but it had less procs.
 
+# Limitations
 
+- Only 1 character per class (need more data to reach any conclusion).
+- Not every class had full buffs.
+- Not every class was playing optimally (PTR session).
