@@ -30,6 +30,8 @@ library(cowplot)
 library(ggtext)
 library(extrafont)
 library(scales)
+library(ggridges)
+
 ```
 ## Random 
 ```{r}
@@ -41,6 +43,7 @@ scale_factor = 2.65
 #e900 discord
 font_add(family = "forgefooter", "forgefooter.ttf")
 font_import()
+n
 showtext_auto(TRUE)
 ```
 
@@ -152,7 +155,7 @@ WCL_API2_request <- function(request) {
   response <- POST(url,
                    add_headers("Content-Type" = "application/json",
                                "Authorization"= paste0("Bearer ",
-                                                       token$access_token)),
+                                                       token)),
                    body = request,
                    content_type_json(),
                    encode = "json")
@@ -333,6 +336,8 @@ write.csv(encounter_data,paste0("encounter_data",format(Sys.time(), "%Y_%m_%d"),
 ### -Clean encounter data
 
 ```{r}
+encounter_data<- read.csv("raw_data/encounter_data2023_05_09.csv")
+
 encounter_data_clean <- encounter_data %>%
   distinct(encounterID,difficulty,averageItemLevel,size,kill,duration,bossPercentage,.keep_all=T)
 
@@ -653,6 +658,7 @@ buff_response_final<- response_formatted_list
 rm(response_formatted_list)
 buff_data_final_1 <- do.call(bind_rows, buff_response_final)
 
+write.csv(buff_data_final_1,paste0("./raw_data/buff_data_final_1",format(Sys.time(), "%Y_%m_%d"),".csv"))
 ```
 
 ### Save
@@ -690,7 +696,6 @@ buff_data_final_1 %>%
   mutate(time_between = timestamp-lag(timestamp)) 
 
 
-library(ggridges)
 
 
 plot5_ridge  <- buff_data_final_1 %>% 
@@ -721,7 +726,7 @@ plot5_ridge  <- buff_data_final_1 %>%
   labs(title="Time (ms) between Shard of Flame procs",
        #fill=expression(underline(Legend)),
        #color="Legend",
-       caption=c("<p><span style='font-family:forgefooter'>&#xe900;</span> &emsp; Discord: Forge&#35;0001 &#91;Vivax-Pagle(US)&#93<span style='color:#FFFFFF;'>........................................................................................................................</span>Support: https:&#47;&#47;www&#46;ko-fi.com/forge <br> <span style='font-family:forgefooter'>&#xe901;</span>/ForgeGit/togc-reign-analysis<span style='color:#FFFFFF;'>.........................................................................................................................................</span> Last Update: 09/05/2023 &#40;dd/mm/yyyy&#41; 22:00 UTC</p>",
+       caption=c("<p><span style='font-family:forgefooter'>&#xe900;</span> &emsp; Discord: Forge&#35;0001 &#91;Vivax-Pagle(US)&#93<span style='color:#FFFFFF;'>................................................................................................................................................</span>Support: https:&#47;&#47;www&#46;ko-fi.com/forge <br> <span style='font-family:forgefooter'>&#xe901;</span>/ForgeGit/togc-reign-analysis<span style='color:#FFFFFF;'>.................................................................................................................................................................</span> Last Update: 09/05/2023 &#40;dd/mm/yyyy&#41; 22:00 UTC</p>",
                  "<p> ",
                  "<br ALIGN = 'LEFT'/> </p>"),
        x="Milliseconds between Shard of Flames proc",
@@ -755,7 +760,8 @@ plot5_ridge  <- buff_data_final_1 %>%
               ),
     fill= guide_none()
   )+ 
-  theme(axis.text.y = element_blank()) 
+  theme(axis.text.y = element_blank(),
+        plot.margin=unit(c(1,1,1,1), "pt"))
 
 ggsave("./plot5_ridge.png",plot5_ridge, 
        width = 8, height =4,units="in",device = "png",dpi=300)
