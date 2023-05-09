@@ -1,0 +1,904 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-05-08"
+---
+
+# Settings 
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+options(scipen = 100)
+options(Encoding="UTF-8")
+#install.packages("viridis")  # Install
+#install.packages(c("httr", "jsonlite","tidyverse","gtsummary","gghighlight"))
+library(httr)
+library(jsonlite)
+library(tidyverse)
+library(gtsummary)
+library(gghighlight)
+library(png)
+library(grid)
+library("viridis") 
+library(ggplot2)
+library(showtext)
+#> Loading required package: sysfonts
+#> Loading required package: showtextdb
+library(ggrepel)
+library(cowplot)
+library(ggtext)
+library(extrafont)
+library(scales)
+```
+## Random 
+```{r}
+scale_factor = 2.65
+
+# ` variable name `     |n      or | or
+#"forge-"    
+#e901 github
+#e900 discord
+font_add(family = "forgefooter", "forgefooter.ttf")
+font_import()
+showtext_auto(TRUE)
+```
+
+## Auth Token request
+
+```{r}
+token <- POST("https://www.warcraftlogs.com/oauth/token",
+          config = list(),
+          body = list(
+            grant_type="client_credentials",
+            client_id=client_id,
+            client_secret=client_secret))
+
+token <- content(token,"parsed")
+
+rm(client_id,client_secret)
+```
+
+```{r}
+token <- Sys.getenv("TOKEN")
+```
+
+## Functions
+
+### theme
+```{r}
+vivax_theme <- function() {
+  theme_bw() +
+    
+    theme(axis.title.x = element_text(size = scale_factor * 13),
+          axis.title.y = element_text(size = scale_factor * 13),
+          plot.title = element_markdown(face = "bold",
+                                        size = scale_factor * 16,
+                                        hjust = 0),
+          plot.subtitle = element_markdown(face="italic",
+                                       size = scale_factor * 12,
+                                       lineheight=0.3),
+          plot.caption = element_markdown(face = "italic",
+                                          hjust = c(0,-3.4,-2.42),
+                                          vjust=c(1,0.7,0.775),
+                                          size = scale_factor * 8,
+                                          lineheight=c(0.5,0,0.75)),
+          legend.position = c(0.26, 0.8),
+          legend.spacing.x = unit(1, "pt"),
+          legend.spacing.y = unit(0.5, "pt"),
+          legend.direction="horizontal",
+          legend.box.just = "left",
+          legend.title = element_text(size=scale_factor*13),
+          legend.text = element_text(size = scale_factor * 11,
+                                     lineheight=0.5),
+        #  legend.background = element_rect(fill = "transparent"),
+          axis.text = element_markdown(size= scale_factor * 10),
+           axis.text.x= element_markdown(size= scale_factor * 10),
+          strip.text.x = element_text(size = scale_factor * 12),
+          legend.background = element_rect(fill = alpha('white', 0.4))
+  )
+}
+```
+
+### Split violin
+
+```{r}
+GeomSplitViolin <- ggproto("GeomSplitViolin", GeomViolin, 
+                           draw_group = function(self, data, ..., draw_quantiles = NULL) {
+  data <- transform(data, xminv = x - violinwidth * (x - xmin), xmaxv = x + violinwidth * (xmax - x))
+  grp <- data[1, "group"]
+  newdata <- plyr::arrange(transform(data, x = if (grp %% 2 == 1) xminv else xmaxv), if (grp %% 2 == 1) y else -y)
+  newdata <- rbind(newdata[1, ], newdata, newdata[nrow(newdata), ], newdata[1, ])
+  newdata[c(1, nrow(newdata) - 1, nrow(newdata)), "x"] <- round(newdata[1, "x"])
+
+  if (length(draw_quantiles) > 0 & !scales::zero_range(range(data$y))) {
+    stopifnot(all(draw_quantiles >= 0), all(draw_quantiles <=
+      1))
+    quantiles <- ggplot2:::create_quantile_segment_frame(data, draw_quantiles)
+    aesthetics <- data[rep(1, nrow(quantiles)), setdiff(names(data), c("x", "y")), drop = FALSE]
+    aesthetics$alpha <- rep(1, nrow(quantiles))
+    both <- cbind(quantiles, aesthetics)
+    quantile_grob <- GeomPath$draw_panel(both, ...)
+    ggplot2:::ggname("geom_split_violin", grid::grobTree(GeomPolygon$draw_panel(newdata, ...), quantile_grob))
+  }
+  else {
+    ggplot2:::ggname("geom_split_violin", GeomPolygon$draw_panel(newdata, ...))
+  }
+})
+
+geom_split_violin <- function(mapping = NULL, data = NULL, stat = "ydensity", position = "identity", ..., 
+                              draw_quantiles = NULL, trim = TRUE, scale = "area", na.rm = FALSE, 
+                              show.legend = NA, inherit.aes = TRUE) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomSplitViolin, 
+        position = position, show.legend = show.legend, inherit.aes = inherit.aes, 
+        params = list(trim = trim, scale = scale, draw_quantiles = draw_quantiles, na.rm = na.rm, ...))
+}
+```
+
+
+### API req.
+
+```{r}
+#### Set-up API requests
+
+url <- "https://classic.warcraftlogs.com/api/v2"
+
+WCL_API2_request <- function(request) {
+  
+  request <- jsonlite::toJSON(list(query=request),
+                              auto_unbox=TRUE, 
+                              bigint_as_char=F) 
+  
+  response <- POST(url,
+                   add_headers("Content-Type" = "application/json",
+                               "Authorization"= paste0("Bearer ",
+                                                       token$access_token)),
+                   body = request,
+                   content_type_json(),
+                   encode = "json")
+  
+  response_formated <- fromJSON(content(response, 
+                                        as = "text",
+                                        encoding="UTF-8"), 
+                                bigint_as_char=TRUE)
+  
+  return(response_formated)
+}
+
+```
+
+### Queries 
+
+```{r}
+request_logs_str <- '{
+    reportData {
+        reports(zoneID:%i
+                page:%i
+                ){
+                data {
+                    code
+                    startTime
+                    endTime
+                    }
+                  }
+                }
+                        }
+    '
+
+
+
+request_encounter_str <- '{
+    reportData {
+        report(code: "%s") {
+            fights(killType: Encounters){
+            encounterID
+            difficulty
+            hardModeLevel
+            averageItemLevel
+            size
+            kill
+            lastPhase
+            startTime
+            endTime
+            fightPercentage
+            bossPercentage
+            completeRaid
+            id
+            }
+        }
+        }
+    }'
+
+
+request_damage_str <- '{
+    reportData {
+        report(code: "%s") {
+            events(dataType:DamageDone
+                  killType:Encounters
+                  hostilityType:Friendlies
+                  fightIDs:%i
+                  startTime: 0
+                  endTime: 999999999999 
+                  filterExpression:"%s"){
+              data
+              nextPageTimestamp
+              }
+            }
+        }
+        }'
+
+
+request_buffs_str <- '{
+    reportData {
+        report(code: "%s") {
+            events(dataType:Buffs
+                  killType:Encounters
+                  hostilityType:Friendlies
+                  fightIDs:%i
+                  sourceID: %i
+                  startTime: 0
+                  endTime: 999999999999){
+              data
+              nextPageTimestamp
+              }
+            }
+        }
+        }'
+
+
+pillar_filter <- "ability.id in (67760)"
+pillar_filter_test <- "ability.id in (56488)"
+
+```
+
+#+ Get data
+
+## Logs from PTR
+
+```{r}
+request_logs_code <- sprintf(request_logs_str,1018, 1:25)
+
+response_logs_code <- lapply(seq_along(request_logs_code), function(i) {  
+  
+  response <- WCL_API2_request(request_logs_code[i]
+  )$data$reportData$reports$data
+  
+  if (i %% 5 == 0) {
+    cat("Processed", i, "out of", length(request_logs_code), "\n")
+  }
+  
+  return(response)
+})
+
+response_logs_code_df <- do.call(rbind, response_logs_code)
+
+write.csv(response_logs_code_df,paste0("response_logs_code_df",format(Sys.time(), "%Y_%m_%d"),".csv"))
+```
+
+## Get encounter data
+
+```{r}
+logIDs <- unique(response_logs_code_df$code)
+
+request_encounter <- sprintf(request_encounter_str, logIDs)
+response_formatted_list <- lapply(seq_along(request_encounter), function(i) {  
+  
+  response <- WCL_API2_request(request_encounter[i])$data$reportData$report$fights 
+  
+  if (i %% 100 == 0) {
+    cat("Processed", i, "out of", length(request_encounter), "\n")
+  }
+  
+  if(length(response) != 0) {
+    
+    response <- mutate(response, 
+                       duration = endTime - startTime,  
+                       duration_s = duration/1000,
+                       logID = as.character(logIDs[i])
+    )
+    
+    response <- rename(response,fightID = id)
+    
+  } else {
+    response <- data.frame(logID = character(0),
+                           fightID=integer(0),
+                           encounterID=integer(0),
+                           difficulty =integer(0),
+                           hardModeLevel =integer(0),
+                           averageItemLevel =integer(0),
+                           size =integer(0),
+                           kill =character(0),
+                           lastPhase =integer(0),
+                           startTime=integer(0) ,
+                           endTime =integer(0),
+                           fightPercentage=integer(0) ,
+                           bossPercentage=integer(0) ,
+                           completeRaid =character(0),
+                           
+                           duration=integer(0)  ,
+                           duration_s=integer(0) 
+                           
+    )
+  }
+  return(response)
+})
+
+encounter_response_list<- response_formatted_list
+rm(response_formatted_list)
+encounter_data <- do.call(rbind, encounter_response_list)
+
+write.csv(encounter_data,paste0("encounter_data",format(Sys.time(), "%Y_%m_%d"),".csv"))
+```
+
+### -Clean encounter data
+
+```{r}
+encounter_data_clean <- encounter_data %>%
+  distinct(encounterID,difficulty,averageItemLevel,size,kill,duration,bossPercentage,.keep_all=T)
+
+```
+
+## Get damage data
+
+```{r}
+logIDs <-encounter_data_clean$logID
+fightIDs <- encounter_data_clean$fightID
+
+request_buffs <- sprintf(request_damage_str, logIDs,fightIDs,pillar_filter)
+
+
+#request_buffs <- request_buffs[1:100]
+
+response_formatted_list <- lapply(seq_along(request_buffs), function(i) {  
+  
+  response <- WCL_API2_request(request_buffs[i])$data$reportData$report$events$data
+  
+  if (i %% 100 == 0) {
+    cat("Processed", i, "out of", length(request_buffs), "\n")
+  }
+  
+  if(length(response) != 0) {
+    
+    response <- mutate(response, 
+                       
+                       logID = as.character(logIDs[i]),
+                       
+                       fightID = encounter_data_clean[i,13],
+                       
+                       startTime= encounter_data_clean[i,8],
+                       endTime= encounter_data_clean[i,9],
+                       encounterID= encounter_data_clean[i,1],
+                       kill =  encounter_data_clean[i,6],
+                       duration_s=  encounter_data_clean[i,15] ,
+                       size=  encounter_data_clean[i,5],
+                       
+    )
+    
+  } else {
+    response <- data.frame(timestamp=integer(0),
+                           type=character(0),
+                           sourceInstance=integer(0),
+                           sourceID=integer(0),
+                           targetID=integer(0),
+                           targetInstance =integer(0),
+                           abilityGameID =integer(0),
+                           buffs  =character(0),                                        
+                           hitType =integer(0),                                        
+                           amount =integer(0),
+                           unmitigatedAmount=integer(0) ,
+                           sourceMarker=integer(0),
+                           overkill=integer(0),
+                           resisted=integer(0),
+                           tick = integer(0),
+                           
+                           logID =character(0),  
+                           fightID =integer(0),
+                           
+                           startTime =integer(0),
+                           endTime =integer(0),
+                           encounterID = integer(0),
+                           
+                           kill = integer(0),
+                           duration_s=integer(0)
+    )
+  }
+  return(response)
+})
+
+
+dmg_response_final_list<- response_formatted_list
+rm(response_formatted_list)
+dmg_data_final_1 <- do.call(bind_rows, dmg_response_final_list)
+
+write.csv(dmg_data_final_1,paste0("dmg_data_final_1",format(Sys.time(), "%Y_%m_%d"),".csv"))
+```
+
+
+#+ Process data
+
+```{r}
+log_list <- c("tDzK7FTJqW3LwAr4",
+  "36XxM8WBTjFtcpKN",
+  "j2MkDALRFGr8cw9g",
+  "D3zVab78GpJ2dXM4")
+
+hitType_list <- c(16,2,17,1)
+
+
+dg_final_processed<- dmg_data_final_1  %>% 
+  filter(logID %in% log_list & 
+           hitType %in% hitType_list & 
+           encounterID!=633) %>%
+  mutate(
+    logID2 = case_when(logID == 'tDzK7FTJqW3LwAr4' ~ 'Enh Shaman',
+                      logID == '36XxM8WBTjFtcpKN' ~ 'Spriest',
+                      logID == 'j2MkDALRFGr8cw9g' ~ 'Boomie',
+                      logID == 'D3zVab78GpJ2dXM4' ~ 'Mage'
+                      
+    ),
+    hitType2 = case_when(hitType == 17 ~ 'Crit',
+                        hitType == 2 ~ 'Crit',
+                        hitType == 1 ~ 'Normal',
+                        hitType == 16 ~ 'Normal'
+                        
+    ),
+    
+    amount_full = amount + ifelse(!is.na(resisted),resisted,0) + ifelse(!is.na(overkill),overkill,0),
+     amount_resist = amount + ifelse(!is.na(overkill),overkill,0)
+  ) 
+  
+## Modifier testing
+
+ dg_final_processed %>%  
+  filter(hitType2 == "Crit") %>% 
+  select(amount, amount_resist, unmitigatedAmount, logID2) %>% 
+  ungroup() %>%
+  mutate(modifier = round(amount_resist/unmitigatedAmount,1)) %>%
+  group_by(modifier, logID2) %>%
+  summarise(n=n())
+```
+
+## Crit Tables
+
+```{r}
+summ <- dg_final_processed %>% 
+  group_by(logID2,hitType2) %>%
+  summarise(amount_full=median(amount_full), n=n())
+
+
+summ <- dg_final_processed %>% 
+  group_by(logID2) %>%
+  filter(amount_full<5000) %>% ## Cutoff for outliers?
+  summarise(amount_full=median(amount_full), n=n())
+```
+
+#+ Graphics
+
+## PLOT 1
+
+```{r}
+xlabs <- table(dg_final_processed$logID2)
+
+dg_final_processed %>%
+  group_by(hitType2,logID2) %>%
+  summarise(n=n()) %>% ungroup() %>%
+  pivot_wider(names_from = hitType2, values_from = n) %>%
+  mutate(total= Crit+Normal,
+         per=Crit/total)%>%
+arrange(per)
+
+plot2 <- dg_final_processed %>%
+  
+  ggplot(aes(x=factor(logID2,
+                      levels=c("Mage","Boomie","Spriest","Enh Shaman"),
+                      labels=c("Mage\n(N=137 | 53% Crit)","Boomie\n(N=18 | 44% Crit)","Spriest\n(N=49 | 30% Crit)","Enh Shaman\n(N=75 | 37% Crit)")),
+             y=amount_full,
+             fill=hitType2)) + 
+  
+  geom_split_violin() + vivax_theme() +
+  
+  labs(title="Pillar of Flame (Reign) damage by Class",
+       #fill=expression(underline(Legend)),
+       #color="Legend",
+       caption=c("<p><span style='font-family:forgefooter'>&#xe900;</span> &emsp; Discord: Forge&#35;0001 &#91;Vivax-Pagle(US)&#93<span style='color:#FFFFFF;'>...........................................................................................................................</span>Support: https:&#47;&#47;www&#46;ko-fi.com/forge <br> <span style='font-family:forgefooter'>&#xe901;</span>/ForgeGit/togc-reign-analysis<span style='color:#FFFFFF;'>............................................................................................................................................</span> Last Update: 09/05/2023 &#40;dd/mm/yyyy&#41; 22:00 UTC</p>",
+                 "<p> ",
+                 "<br ALIGN = 'LEFT'/> </p>"),
+       x="Class",
+       y="Damage per hit",
+       subtitle=paste0("Heroic version (ID: 67760) - Jaraxxus excluded - 4 logs / 27 encounters / 7 kills / 20 wipes <br>Damage values are unmitigated values before resists. - <span style='color:#ff0000;'>Small Sample!!</span>"))+
+  scale_y_continuous(breaks=seq(0,8000,500),labels = comma)+#scale_x_discrete(labels=xlabs) +
+  geom_hline(aes(yintercept = 3354, colour="Mage"), linetype = "dashed")+ 
+  geom_hline(aes(yintercept = 2712, colour="Druid"), linetype = "dashed")+ 
+  geom_hline(aes(yintercept = 2250, colour="Enh Shaman"), linetype = "dashed")+ 
+  geom_hline(aes(yintercept = 2500, colour="Spriest"), linetype = "dashed") +
+  scale_color_manual(values = c("Mage"= "#69CCF0",
+                                "Druid"=      "#FF7D0A", 
+                                "Enh Shaman" = "#0070DE",
+                                "Spriest"="black")) +
+  # guides(fill="none") +   
+  scale_fill_manual(values = c("#DC3220","#005AB5")) +
+  
+  guides(
+    fill = guide_legend(order=2,title = "Hit Type:  "),
+    color= guide_legend(order=1,title = "Avg. Hit:  ")
+  ) + theme(plot.margin=unit(c(1,1,1,1), "pt"),
+          legend.position = c(0.26, 0.85))
+
+
+plot2
+
+ggsave("./plot2.png",plot2, 
+       width = 8, height =4,units="in",device = "png",dpi=300)
+```
+
+
+### Table 1
+
+```{r}
+dg_final_processed %>% 
+  select(logID2,damage=amount_full, hitType2)%>%
+  tbl_strata(
+    strata = logID2,
+    ~.x %>%
+      tbl_summary(
+        by = hitType2,
+        type = where(is.numeric) ~ "continuous",
+        statistic = list(
+      all_continuous() ~ "Mean:{mean}\nSD:({sd})\nMin:{min}\nMax:{max}")
+      ) #%>%
+     # modify_header(all_stat_cols() ~ "**{level}**")
+  )
+
+
+```
+
+
+```{r}
+ dg_final_processed %>% 
+  filter(kill==1) %>% 
+  group_by(logID2, fightID,duration_s) %>%
+  summarise(n=n()) %>%
+  group_by(logID2) %>%
+  summarise(sum_duration = sum(duration_s),
+            n_total = sum(n)) %>% ungroup() %>% 
+  mutate(n_min = n_total/sum_duration)
+```
+```{r}
+write.csv(dg_final_processed %>% select(logID, fightID, encounterID, size, Class=logID2, 
+                                        timestamp,type,sourceID,abilityGameID,hitType,hitType2,amount,unmitigatedAmount,amount_full, resisted, overkill,
+                                        buffs),"raw_data_reign.csv")
+```
+
+
+## PLOT 2
+
+### Get new data for buffs
+
+```{r}
+logIDs <-encounter_data_clean %>% filter(logID %in% log_list) %>% select(logID) %>% pull(.)
+fightIDs <- encounter_data_clean %>% filter(logID %in% log_list)%>% select(fightID) %>% pull(.)
+sourceIDs <- c(139,139,139,139,139,139,
+               9,9,9,9,9,9,9,
+               7,7,7,7,7,7,
+               371,371,371,371,371,
+               371,371,371,371,371,
+               371,371,371,371,371,
+               371,371,371,371,371,
+               371,371,371,371,371,
+               371,371,371,371,371,
+               371,371)
+
+request_buffs <- sprintf(request_buffs_str, logIDs,fightIDs,sourceIDs)
+
+#request_buffs <- request_buffs[1:100]
+
+response_formatted_list <- lapply(seq_along(request_buffs), function(i) {  
+  
+  response <- WCL_API2_request(request_buffs[i])$data$reportData$report$events$data
+  
+  if (i %% 100 == 0) {
+    cat("Processed", i, "out of", length(request_buffs), "\n")
+  }
+  
+  if(length(response) != 0) {
+    
+    response <- mutate(response, 
+                       
+                       logID = as.character(logIDs[i]),
+                       
+                       fightID = encounter_data_clean[i,13],
+                       
+                       startTime= encounter_data_clean[i,8],
+                       endTime= encounter_data_clean[i,9],
+                       encounterID= encounter_data_clean[i,1],
+                       kill =  encounter_data_clean[i,6],
+                       duration_s=  encounter_data_clean[i,15] ,
+                       size=  encounter_data_clean[i,5],
+                       
+    )
+    
+  } else {
+    response <- data.frame(timestamp=integer(0),
+                           type=character(0),
+                           sourceInstance=integer(0),
+                           sourceID=integer(0),
+                           targetID=integer(0),
+                           targetInstance =integer(0),
+                           abilityGameID =integer(0),
+                           buffs  =character(0),                                        
+                           hitType =integer(0),                                        
+                           amount =integer(0),
+                           unmitigatedAmount=integer(0) ,
+                           sourceMarker=integer(0),
+                           overkill=integer(0),
+                           resisted=integer(0),
+                           tick = integer(0),
+                           
+                           logID =character(0),  
+                           fightID =integer(0),
+                           
+                           startTime =integer(0),
+                           endTime =integer(0),
+                           encounterID = integer(0),
+                           
+                           kill = integer(0),
+                           duration_s=integer(0)
+    )
+  }
+  return(response)
+})
+
+
+buff_response_final<- response_formatted_list
+rm(response_formatted_list)
+buff_data_final_1 <- do.call(bind_rows, buff_response_final)
+
+```
+
+### Save
+
+```{r}
+buff_data_final_1 %>% 
+  filter(abilityGameID==67759) %>% 
+  arrange(logID,fightID,startTime) %>%
+  group_by(logID,fightID,startTime) %>% 
+  mutate(time_between = timestamp-lag(timestamp)) %>%
+  
+  select(logID,sourceID,fightID,time_between) %>%
+  
+  group_by(logID) %>%
+  
+  summarise(max = max(time_between,na.rm=T),
+            min = min(time_between,na.rm=T),
+            mean = mean(time_between,na.rm=T),
+            median = median(time_between,na.rm=T),
+            n= n()) %>% ungroup() %>%
+  mutate(
+    logID2 = case_when(logID == 'tDzK7FTJqW3LwAr4' ~ 'Enh Shaman',
+                      logID == '36XxM8WBTjFtcpKN' ~ 'Spriest',
+                      logID == 'j2MkDALRFGr8cw9g' ~ 'Boomie',
+                      logID == 'D3zVab78GpJ2dXM4' ~ 'Mage'
+                      
+    )
+    )
+
+
+buff_data_final_1 %>% 
+  filter(abilityGameID==67759 & logID=="D3zVab78GpJ2dXM4" & fightID==40) %>% 
+  arrange(logID,fightID,startTime) %>%
+  group_by(logID,fightID,startTime) %>% 
+  mutate(time_between = timestamp-lag(timestamp)) 
+
+
+library(ggridges)
+
+
+plot5_ridge  <- buff_data_final_1 %>% 
+  filter(abilityGameID==67759) %>% 
+  arrange(logID,fightID,startTime) %>%
+  group_by(logID,fightID,startTime) %>% 
+  mutate(time_between = timestamp-lag(timestamp)) %>%
+  
+  select(logID,sourceID,fightID,time_between)  %>%
+  mutate(
+    logID2 = case_when(logID == 'tDzK7FTJqW3LwAr4' ~ 'Enh Shaman',
+                      logID == '36XxM8WBTjFtcpKN' ~ 'Spriest',
+                      logID == 'j2MkDALRFGr8cw9g' ~ 'Boomie',
+                      logID == 'D3zVab78GpJ2dXM4' ~ 'Mage'
+                      
+    )
+  ) %>%
+  filter(time_between < 10000 & time_between>1489) %>%
+  ggplot(aes(
+    fill=logID2,
+    y= factor(logID2,
+              levels=c("Enh Shaman","Boomie","Spriest","Mage"),
+              labels=c("Enh Shaman (N=266)","Boomie (N=53)","Spriest (N=183)","Mage (N=505)")), 
+    x=time_between)) + 
+  geom_density_ridges() +
+  theme_ridges() + vivax_theme() +
+  
+  labs(title="Time (ms) between Shard of Flame procs",
+       #fill=expression(underline(Legend)),
+       #color="Legend",
+       caption=c("<p><span style='font-family:forgefooter'>&#xe900;</span> &emsp; Discord: Forge&#35;0001 &#91;Vivax-Pagle(US)&#93<span style='color:#FFFFFF;'>........................................................................................................................</span>Support: https:&#47;&#47;www&#46;ko-fi.com/forge <br> <span style='font-family:forgefooter'>&#xe901;</span>/ForgeGit/togc-reign-analysis<span style='color:#FFFFFF;'>.........................................................................................................................................</span> Last Update: 09/05/2023 &#40;dd/mm/yyyy&#41; 22:00 UTC</p>",
+                 "<p> ",
+                 "<br ALIGN = 'LEFT'/> </p>"),
+       x="Milliseconds between Shard of Flames proc",
+       y="Class",
+       subtitle="Heroic version (ID: 67759) - Median lines - N = <span style='color:#69CCF0;'>505</span>, <span style='color:#BFBFBF;'>183</span>, <span style='color:#FF7D0A;'>53</span>, <span style='color:#0070DE;'>266</span>") + theme(
+         legend.position = c(0.72,0.93)) +
+  scale_fill_manual(values = c("Mage"= "#69CCF0",
+                               "Boomie"= "#FF7D0A", 
+                               "Enh Shaman" = "#0070DE",
+                               "Spriest"="grey75")) +
+  scale_x_continuous(breaks=seq(0,10000,500),labels = comma) +
+  
+  geom_vline(aes(xintercept = 4002.5), linetype = "solid",color="black",size=1)+ 
+  geom_vline(aes(xintercept = 3001.5), linetype = "solid",color="black",size=1)+ 
+  geom_vline(aes(xintercept= 2741), linetype = "solid",color="black",size=1)+ 
+  geom_vline(aes(xintercept = 3959.5), linetype = "solid",color="black",size=1) +
+  
+  geom_vline(aes(xintercept = 4002.5, colour="Mage"), linetype = "dotdash",size=0.75)+ 
+  geom_vline(aes(xintercept = 3001.5, colour="Boomie"), linetype = "dotdash",size=0.75)+ 
+  geom_vline(aes(xintercept= 2741, colour="Enh Shaman"), linetype = "dotdash",size=0.75)+ 
+  geom_vline(aes(xintercept = 3959.5, colour="Spriest"), linetype = "dotdash",size=0.75) +
+  scale_color_manual(values = c("Mage"= "#69CCF0",
+                                "Boomie"=      "#FF7D0A", 
+                                "Enh Shaman" = "#0070DE",
+                                "Spriest"="grey75"),
+                     breaks = c("Mage", "Enh Shaman", "Spriest", "Boomie")) +
+  guides(
+    color=guide_legend(order=1, title = "Median:",
+              override.aes = list(linetype = c(1, 1, 1,1),
+                size = c(1,1,1,1))
+              ),
+    fill= guide_none()
+  )+ 
+  theme(axis.text.y = element_blank()) 
+
+ggsave("./plot5_ridge.png",plot5_ridge, 
+       width = 8, height =4,units="in",device = "png",dpi=300)
+
+``` 
+
+# Trash can
+
+## Plot attempt #1
+
+```{r}
+plot1 <- dg_final_processed %>%
+  
+  ggplot(aes(x=logID2,
+             y=amount_full,
+             fill=hitType2)) +
+  geom_violin() + vivax_theme()+
+  
+  labs(title="Pillar of flame (Reign) damage by Class",
+       #fill=expression(underline(Legend)),
+       #color="Legend",
+       caption=c("<p><span style='font-family:forgefooter'>&#xe900;</span> &emsp; Discord: Forge&#35;0001 &#91;Vivax-Pagle(US)&#93; <br> <span style='font-family:forgefooter'>&#xe901;</span> https:&#47;&#47;www&#46;github.com/ForgeGit/togc-reign-analysis-ptr </p>",
+                 "<p> Support: https:&#47;&#47;www&#46;ko-fi.com/forge","<br ALIGN = 'LEFT'/> Last Update: 09/05/2023 &#40;dd/mm/yyyy&#41; 22:00 UTC </p>"),
+       x="Class",
+       y="Damage per hit",
+       subtitle="")+
+  scale_y_continuous(breaks=seq(0,8000,500))
+
+
+
+plot1
+
+ggsave("./plot1.png",plot1, 
+       width = 8, height =4,units="in",device = "png",dpi=300)
+```
+
+## Table attempt #1
+
+```{r}
+dg_final_processed %>% 
+  select(logID2,damage=amount_full, hitType2) %>%
+      tbl_summary(
+        by = logID2,
+        type = where(is.numeric) ~ "continuous"
+      ) %>%
+      modify_header(all_stat_cols() ~ "**{level}**")
+
+fn_add_mean <- function(data, variable, ...) {
+  data %>%
+    dplyr::group_by(.data[[variable]]) %>%
+    dplyr::arrange(.data[[variable]]) %>%
+    dplyr::summarise(damage = mean(damage, na.rm = TRUE)) %>%
+    select(damage) %>%
+    mutate(damage = style_sigfig(damage))
+}
+
+
+dg_final_processed %>% 
+  select(logID2,damage=amount_full, hitType2) %>%
+  tbl_summary(
+    include  = -damage,
+    type = everything() ~ "categorical"
+  ) %>%
+  add_stat(
+    all_categorical() ~ fn_add_mean,
+    location = all_categorical() ~  "level"
+  ) 
+```
+
+## Plot attempt #2
+
+```{r}
+plot3 <- dg_final_processed %>%
+
+  ggplot(aes(x=factor(logID2,levels=c("Mage","Boomie","Enh Shaman","Spriest")),y=amount_full,fill=hitType2)) + 
+    geom_bar(position="fill", stat="identity") + vivax_theme() + 
+  scale_y_continuous(labels = scales::percent)
+plot3
+
+
+ggsave("./plot3.png",plot3, 
+       width = 8, height =4,units="in",device = "png",dpi=300)
+
+```
+
+## Plot attempt #3
+
+```{r}
+plot4 <- dg_final_processed %>%
+  group_by(hitType2,logID2) %>%
+  summarise(n=n()) %>% ungroup() %>%
+  pivot_wider(names_from = hitType2, values_from = n) %>%
+  mutate(total= Crit+Normal,
+         per=Crit/total)%>%
+arrange(per) %>%    # First sort by val. This sort the dataframe but NOT the factor levels
+  mutate(logID2=factor(logID2, levels=logID2)) %>%   # This trick update the factor levels
+  ggplot( aes(x=logID2, y=per)) +
+    geom_segment( aes(xend=logID2, yend=0)) +
+    geom_point( size=4, color="orange") +
+    coord_flip() +
+    theme_bw() +
+    xlab("")
+
+plot4
+
+
+ggsave("./plot4.png",plot4, 
+       width = 8, height =4,units="in",device = "png",dpi=300)
+
+```
+
+## All anub kills 25m heroic
+
+```{r}
+a <- encounter_data_clean %>% filter(encounterID==645 & difficulty==4 & kill==TRUE & size==25)
+write.csv(a %>% select(logID,duration_s,averageItemLevel),"Anub_Heroic_25.csv")
+
+```
+
+## Funny graphic Chat GPT did
+
+```{r}
+library(RColorBrewer)
+
+# Define custom color palette for each fill group
+group1_colors <- brewer.pal(3, "Set1")  # Adjust the number as per your requirement
+group2_colors <- brewer.pal(4, "Set2")  # Adjust the number as per your requirement
+
+df <- data.frame(
+  Category = rep(c("Category A", "Category B"), each = 20),
+  Group = rep(c("Group 1", "Group 2"), times = 20),
+  Value = rnorm(40)
+)
+
+# Define the colors for each category and group
+category_colors <- c("Category A" = "steelblue", "Category B" = "darkgreen")
+group_colors <- c("Group 1" = "lightgray", "Group 2" = "gray25")
+
+# Create the violin plot
+ggplot(df, aes(x = Category, y = Value, fill = Category)) +
+  geom_violin(trim = FALSE) +
+  scale_fill_manual(values = category_colors) +
+  geom_violin(aes(fill = Group), trim = FALSE, alpha = 0.7) +
+  scale_fill_manual(values = group_colors, guide = FALSE) +
+  theme_minimal()
+```
