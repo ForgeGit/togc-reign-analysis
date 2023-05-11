@@ -499,7 +499,7 @@ plot2 <- dg_final_processed %>%
                       labels=c("Mage\n(N=137 | 53% Crit)","Boomie\n(N=18 | 44% Crit)","Spriest\n(N=49 | 30% Crit)","Enh Shaman\n(N=75 | 37% Crit)")),
              y=amount_full,
              fill=hitType2)) + 
-  
+  # https://stackoverflow.com/questions/35717353/split-violin-plot-with-ggplot2
   geom_split_violin() + vivax_theme() +
   
   labs(title="Pillar of Flame (Reign) damage by Class",
